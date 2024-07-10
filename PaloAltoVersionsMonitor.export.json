@@ -1,0 +1,94 @@
+{
+  "assessments": [],
+  "controls": [
+    {
+      "id": "14d888ce-22d6-4942-95c0-9f393731fb5e",
+      "controlCode": "UD-00008",
+      "controlType": "REGEX",
+      "domainId": 1,
+      "name": "Palo Alto - EOL check, app release, av release, url filtering, wildfire and threat release dates",
+      "severity": 1,
+      "system": false,
+      "properties": [
+        {
+          "controlId": "14d888ce-22d6-4942-95c0-9f393731fb5e",
+          "controlType": "REGEX",
+          "name": "FailWhenResultsExist",
+          "type": "BOOLEAN",
+          "displayName": "Fail When Results Exist",
+          "required": true,
+          "booleanValue": true
+        },
+        {
+          "controlId": "14d888ce-22d6-4942-95c0-9f393731fb5e",
+          "controlType": "REGEX",
+          "name": "FilenamesToSearch",
+          "type": "STRING",
+          "displayName": "Filenames To Search",
+          "required": false,
+          "string": "api_system_info"
+        },
+        {
+          "controlId": "14d888ce-22d6-4942-95c0-9f393731fb5e",
+          "controlType": "REGEX",
+          "name": "InfoOnly",
+          "type": "BOOLEAN",
+          "displayName": "Information Only",
+          "required": true,
+          "booleanValue": true
+        },
+        {
+          "controlId": "14d888ce-22d6-4942-95c0-9f393731fb5e",
+          "controlType": "REGEX",
+          "name": "MaxLineLength",
+          "type": "INTEGER",
+          "displayName": "Max Line Length",
+          "required": true,
+          "integerValue": 160
+        },
+        {
+          "controlId": "14d888ce-22d6-4942-95c0-9f393731fb5e",
+          "controlType": "REGEX",
+          "name": "Pattern",
+          "type": "STRING",
+          "displayName": "Pattern",
+          "required": true,
+          "string": "(?:<app-release-date>|<av-release-date>|<url-filtering-version>|<wildfire-release-date>|<threat-release-date>|<model>|<sw-version>).*"
+        },
+        {
+          "controlId": "14d888ce-22d6-4942-95c0-9f393731fb5e",
+          "controlType": "REGEX",
+          "name": "SearchAllFiles",
+          "type": "BOOLEAN",
+          "displayName": "Search All Files",
+          "required": true,
+          "booleanValue": false
+        }
+      ],
+      "filters": [
+        {
+          "id": "31a320ba-a74d-44ca-bb77-092f4d89b261",
+          "type": "DEVICE_TYPE",
+          "deviceType": "FIREWALL"
+        },
+        {
+          "id": "880f4f10-af5b-4a41-aae2-35e819a22127",
+          "type": "VENDOR",
+          "vendor": "Palo Alto Networks"
+        },
+        {
+          "id": "3e2937b8-38d5-4331-b69d-75edd53e9bd5",
+          "type": "DEVICE_TYPE",
+          "deviceType": "DEVICE_MGR"
+        }
+      ],
+      "createdBy": "firemon",
+      "createdDate": "2023-12-13T15:06:53.483Z",
+      "lastModifiedBy": "firemon",
+      "lastModifiedDate": "2024-07-09T20:26:03.202Z",
+      "observesSystemRules": false
+    }
+  ],
+  "zones": [],
+  "services": []
+}
