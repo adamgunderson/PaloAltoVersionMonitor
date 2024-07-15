@@ -28,6 +28,7 @@ $ pip install requests
 $ pip install beautifulsoup4
 $ pip install chardet
 ```
+### Running in FMOS ###
 Installing these additional libraries on FMOS requires the use of a python virtual environment (venv). Follow the instructions below to create a a python virtual environment and set the script to run on the cron schedule.
 
 Create the venv
