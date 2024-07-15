@@ -9,9 +9,7 @@ https://firemon.xyz/imports/PaloAltoVersionsMonitor.export.json
 
 Device Retrievals in FireMon Security Manager must be scheduled relative to the lowest alert threshold. The script variable for RevisionMaxAge as a fail-safe to prevent false positives in cases where FireMon does not have a recent revision to check.
 
-EOL models and dates stored in CSV files that this script references. Two supplemental scripts exist to generate/update the CSV files: 
-https://firemon.xyz/imports/scrape-hw-eol.py
-https://firemon.xyz/imports/scrape-sw-eol.py
+EOL models and dates stored in CSV files that this script references. Use **scrape-eol-dates.py** to generate the CSV's.
 
 This script can be ran on automatically on a schedule using cron. An example cron expression to run this script every hour is below. 
 > 0 * * * * /usr/bin/python3.9 /home/admin/versionMonitorPaloAlto.py > /dev/null 2>&1 
