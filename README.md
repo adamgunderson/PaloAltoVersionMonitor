@@ -1,7 +1,7 @@
 # Palo Alto Version Monitor for FireMon
 Monitors for EOL software, hardware, as well as out of date releases for Antivirus, Wildfire and Threat.
 
-## versionMonitorPaloAlto.ph
+## versionMonitorPaloAlto.py
 This script uses a regex conrol that checks timestamps for av-release-date, wildfire-release-date, and threat-release-date from api_system_info. It also checks for EOL hardware and software versions. 
 
 An import of the control can be downloaded here:
