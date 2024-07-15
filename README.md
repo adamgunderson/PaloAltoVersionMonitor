@@ -23,15 +23,15 @@ $ /usr/lib/firemon/devpackfw/bin/python -m venv eol-scrape
 ```
 Activate venv.
 ```console
-$ source ~/eol-scrape/bin/activate
+$ source eol-scrape/bin/activate
 ```
 Install pip.
 ```console
-$ python3 ~/eol-scrape/bin/pip install -U pip
+$ python3 eol-scrape/bin/pip install -U pip
 ```
 Now we can install the required libraries.
 ```console
-$ python3 ~/eol-scrape/bin/pip install requests
+$ python3 eol-scrape/bin/pip install requests
 $ python3 eol-scrape/bin/pip install BeautifulSoup4
 $ python3 eol-scrape/bin/pip install chardet 
 ```
