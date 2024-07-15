@@ -17,7 +17,7 @@
 ##                                                                           ##                     ##
 ##                                                                                                  ##
 ##                         Palo Alto Version Alerting for FireMon              ##                   ##
-##                         Version 0.55                                                             ##
+##                         Version 0.57                                                             ##
 ##                                                                                                  ##
 ##                         By Adam Gunderson                                                        ##
 ##                         Adam.Gunderson@FireMon.com                                               ##
@@ -68,6 +68,9 @@ from datetime import datetime, timedelta, timezone  # Import the timezone object
 from dateutil import parser  # Import the parser from dateutil
 import smtplib
 from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 import time
 import urllib3
 import logging
@@ -83,23 +86,23 @@ host_url = 'https://localhost'
 username = 'firemon'
 password = 'firemon'
 
-# Control UUID (shouldnt need to update this if the control imported successfully)
+# Control UUID (Replace with your control UUID)
 control_uuid = '14d888ce-22d6-4942-95c0-9f393731fb5e'
 
 # Device group to check against
 device_group_id = 1
 
 # Email configuration
-email_enabled = False  # Set to True to enable email sending
-smtp_server = 'smtp.yourcompany.com'
-smtp_port = 587  # 25 for non-TLS, 587 for TLS
-smtp_username = 'your_username'  # Leave empty if not using authentication
-smtp_password = 'your_password'  # Leave empty if not using authentication
-sender_email = 'your_sender_email@example.com'
-recipient_email = 'your_recipient_email@example.com'
-use_tls = True  # Set to True to use TLS when sending emails
+email_enabled = True  # Set to True to enable email sending
+smtp_server = 'localhost'
+smtp_port = 25  # 25 for non-TLS, 587 for TLS
+use_tls = False  # Set to True to use TLS when sending emails
+smtp_username = ''  # Leave empty if not using authentication
+smtp_password = ''  # Leave empty if not using authentication
+sender_email = 'PaloAltoVersionMon@firemon.com'
+recipient_email = 'adam.gunderson@firemon.com'
 
-# Combine alerts into a single email (True) or individual emails (False)
+# Combine alerts into a single email (True) or individual (False)
 send_aggregate_email = True
 
 # Define time thresholds for WildFire, AV, Threat, and App update timestamps.
@@ -112,6 +115,9 @@ AppMaxAge = now - 8 * 24 * 3600  # 8 days in seconds
 # Define the maximum age for device revision (in seconds, default to 2 hours). This prevents false positives for devices that FireMon hasn't recently connected to.
 RevisionMaxAge = 2 * 3600  # 2 hours in seconds
 
+# Define the maximum age for device revision specifically for EOL checks (in seconds, set to None for unlimited/disabled).
+EOLRevisionMaxAge = None  # Unlimited/disabled
+
 # Option to ignore certificate validation for FireMon (set to True to ignore validation, helpful if using self-signed certs)
 ignore_certificate = True
 
@@ -123,12 +129,14 @@ log_file_path = 'palo_alto_version_monitor.log'
 save_violations_csv = True
 violations_csv_path = 'violations.csv'
 
-# Option to only check EOL violations (no checking of version dates)
+# Option to only check EOL violations
 check_eol_only = False
 
-# Paths to the CSV files containing EOL dates
-hw_eol_file_path = 'palo_alto_eol_hw_dates.csv'
-sw_eol_file_path = 'palo_alto_eol_sw_dates.csv'
+# Option to attach CSV to email
+attach_csv_to_email = True
+
+# Option to only alert for EOL violations in the next X months
+eol_alert_window_months = 6
 
 # Define a mapping of timezone abbreviations to UTC offsets.
 timezone_offsets = {
@@ -179,6 +187,9 @@ timezone_offsets = {
     # Add more timezones as needed
 }
 
+# Paths to the CSV files containing EOL dates
+hw_eol_file_path = 'palo_alto_eol_hw_dates.csv'
+sw_eol_file_path = 'palo_alto_eol_sw_dates.csv'
 
 #################################################
 ##               END CONFIGURATION             ##
@@ -197,7 +208,10 @@ if logging_enabled:
 auth_url = f'{host_url}/securitymanager/api/authentication/login'
 
 # Function to check postNormalizationCompleteDate and return True if the device is current, False otherwise
-def is_device_current(device_id):
+def is_device_current(device_id, max_age):
+    if max_age is None:
+        return True  # If max_age is None, consider the device as current regardless of age
+    
     device_info_url = f'{host_url}/securitymanager/api/domain/1/device/{device_id}/rev/latest'
     device_info_response = requests.get(device_info_url, headers=headers, verify=not ignore_certificate)
 
@@ -208,7 +222,7 @@ def is_device_current(device_id):
         if postNormalizationCompleteDate:
             postNormalizationCompleteDate_timestamp = datetime.strptime(postNormalizationCompleteDate, '%Y-%m-%dT%H:%M:%S.%fZ').timestamp()
             age = now - postNormalizationCompleteDate_timestamp
-            return age <= RevisionMaxAge
+            return age <= max_age
 
     # If there's an issue with the API request, return False (assume device is not current)
     return False
@@ -225,7 +239,7 @@ def read_eol_dates(csv_file_path):
                 continue  # Skip rows that don't have at least 2 columns
             for date_format in date_formats:
                 try:
-                    eol_dates[row[0]] = datetime.strptime(row[1], date_format).timestamp()
+                    eol_dates[row[0]] = datetime.strptime(row[1], date_format)
                     break
                 except ValueError:
                     continue
@@ -241,6 +255,11 @@ def version_compare(device_version, eol_version):
         elif int(dp) < int(ep):
             return True
     return len(device_parts) >= len(eol_parts)
+
+# Function to check if a date is within the next X months
+def within_next_months(date, months):
+    future_date = datetime.now() + timedelta(days=months * 30)  # Approximate calculation of months
+    return date <= future_date
 
 # Read EOL dates from CSV files
 hw_eol_dates = read_eol_dates(hw_eol_file_path)
@@ -288,11 +307,11 @@ try:
                 line = match.get('line', '')
                 device_id = match.get('deviceId', None)
 
-                # Check if the device is current, if not, skip it
-                if device_id is not None and not is_device_current(device_id):
-                    if logging_enabled:
-                        logging.info(f"Skipping device {device_id} as it is not current.")
-                    continue
+                # Check if the device is current for version checks
+                current_for_version_check = device_id is not None and is_device_current(device_id, RevisionMaxAge)
+
+                # Check if the device is current for EOL checks
+                current_for_eol_check = device_id is not None and is_device_current(device_id, EOLRevisionMaxAge)
 
                 if device_id is not None:
                     # Use regular expressions to extract timestamps and EOL data
@@ -307,7 +326,7 @@ try:
                     if device_id not in timestamps:
                         timestamps[device_id] = {}
 
-                    if not check_eol_only:
+                    if not check_eol_only and current_for_version_check:
                         # Store the timestamps in the dictionary if found
                         if wildfire_match:
                             timestamp_str = wildfire_match.group(1)
@@ -335,22 +354,30 @@ try:
                                 violations.append((device_id, 'threat-release-date'))
 
                     # Check EOL for software version
-                    if sw_version_match:
+                    if sw_version_match and current_for_eol_check:
                         sw_version = sw_version_match.group(1)
-                        for version in sw_eol_dates:
-                            if version_compare(sw_version, version) and sw_eol_dates[version] < now:
-                                eol_violations.add((device_id, 'software', sw_version))
+                        for version, eol_date in sw_eol_dates.items():
+                            if version_compare(sw_version, version):
+                                if within_next_months(eol_date, eol_alert_window_months) or eol_date.timestamp() < now:
+                                    eol_violations.add((device_id, 'software', sw_version, eol_date))
+                                    break
 
                     # Check EOL for hardware model
-                    if model_match:
+                    if model_match and current_for_eol_check:
                         model = model_match.group(1)
-                        for hw_model in hw_eol_dates:
-                            if model.startswith(hw_model) and hw_eol_dates[hw_model] < now:
-                                eol_violations.add((device_id, 'hardware', model))
+                        eol_date = hw_eol_dates.get(model)
+                        if eol_date and (within_next_months(eol_date, eol_alert_window_months) or eol_date.timestamp() < now):
+                            eol_violations.add((device_id, 'hardware', model, eol_date))
 
-                # Log each device's data regardless of violations
-                if logging_enabled:
-                    logging.info(f"Checked device {device_id}: {device_summaries.get(device_id, 'Unknown Device')}")
+                    # Log each device's data regardless of violations
+                    if logging_enabled:
+                        logging.info(f"Checked device {device_id}: {device_summaries.get(device_id, 'Unknown Device')}, "
+                                     f"Wildfire Date: {timestamps.get(device_id, {}).get('wildfire-release-date', 'N/A')}, "
+                                     f"AV Date: {timestamps.get(device_id, {}).get('av-release-date', 'N/A')}, "
+                                     f"App Date: {timestamps.get(device_id, {}).get('app-release-date', 'N/A')}, "
+                                     f"Threat Date: {timestamps.get(device_id, {}).get('threat-release-date', 'N/A')}, "
+                                     f"Software Version: {sw_version_match.group(1) if sw_version_match else 'N/A'}, "
+                                     f"Model: {model_match.group(1) if model_match else 'N/A'}")
 
             # Check if there are any violations
             if violations or eol_violations:
@@ -361,13 +388,18 @@ try:
                     timestamp_difference = now - timestamp_value
                     timestamp_str = datetime.fromtimestamp(timestamp_value, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S %Z')
                     summary += f"FireMon Device ID: {device_id}, Device Name: {device_name}, " \
-                               f"Violation: {timestamp_name}, " \
-                               f"Timestamp: {timestamp_str}, " \
-                               f"Difference: {timedelta(seconds=timestamp_difference)}\n"
-                for device_id, violation_type, value in eol_violations:
+                               f"Violation: {timestamp_name}\n" \
+                               f"Timestamp: {timestamp_str}\n" \
+                               f"Difference: {timedelta(seconds=timestamp_difference)}\n\n"
+                for device_id, violation_type, value, eol_date in eol_violations:
                     device_name = device_summaries.get(device_id, 'Unknown Device')
+                    eol_date_str = eol_date.strftime('%Y-%m-%d')
                     summary += f"FireMon Device ID: {device_id}, Device Name: {device_name}, " \
-                               f"EOL Violation: {violation_type}, Value: {value}\n"
+                               f"EOL Violation: {violation_type}\n" \
+                               f"Value: {value}\n" \
+                               f"EOL Date: {eol_date_str}\n\n"
+
+                print(summary)  # Output the summary
 
                 if logging_enabled:
                     logging.info(summary)
@@ -375,7 +407,7 @@ try:
                 # Save violations to CSV if enabled
                 if save_violations_csv:
                     with open(violations_csv_path, 'w', newline='') as csvfile:
-                        fieldnames = ['Device Name', 'Device ID', 'Violation Type', 'Details']
+                        fieldnames = ['Device Name', 'Device ID', 'Violation Type', 'Details', 'EOL Date']
                         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                         writer.writeheader()
 
@@ -387,16 +419,19 @@ try:
                                 'Device Name': device_name,
                                 'Device ID': device_id,
                                 'Violation Type': timestamp_name,
-                                'Details': timestamp_str
+                                'Details': timestamp_str,
+                                'EOL Date': ''
                             })
 
-                        for device_id, violation_type, value in eol_violations:
+                        for device_id, violation_type, value, eol_date in eol_violations:
                             device_name = device_summaries.get(device_id, 'Unknown Device')
+                            eol_date_str = eol_date.strftime('%Y-%m-%d')
                             writer.writerow({
                                 'Device Name': device_name,
                                 'Device ID': device_id,
                                 'Violation Type': violation_type,
-                                'Details': value
+                                'Details': value,
+                                'EOL Date': eol_date_str
                             })
 
                     if logging_enabled:
@@ -419,10 +454,22 @@ try:
                                 server.login(smtp_username, smtp_password)
 
                             # Create the email message
-                            message = MIMEText(summary)
+                            message = MIMEMultipart()
                             message['Subject'] = subject
                             message['From'] = sender_email
                             message['To'] = recipient_email
+
+                            # Attach the text part
+                            message.attach(MIMEText(summary, 'plain'))
+
+                            # Attach the CSV file if enabled
+                            if save_violations_csv and attach_csv_to_email:
+                                with open(violations_csv_path, 'rb') as attachment:
+                                    part = MIMEBase('application', 'octet-stream')
+                                    part.set_payload(attachment.read())
+                                    encoders.encode_base64(part)
+                                    part.add_header('Content-Disposition', f'attachment; filename={violations_csv_path}')
+                                    message.attach(part)
 
                             # Send the email
                             server.sendmail(sender_email, recipient_email, message.as_string())
@@ -453,10 +500,22 @@ try:
                                     server.login(smtp_username, smtp_password)
 
                                 # Create the email message
-                                message = MIMEText(individual_body)
+                                message = MIMEMultipart()
                                 message['Subject'] = individual_subject
                                 message['From'] = sender_email
                                 message['To'] = recipient_email
+
+                                # Attach the text part
+                                message.attach(MIMEText(individual_body, 'plain'))
+
+                                # Attach the CSV file if enabled
+                                if save_violations_csv and attach_csv_to_email:
+                                    with open(violations_csv_path, 'rb') as attachment:
+                                        part = MIMEBase('application', 'octet-stream')
+                                        part.set_payload(attachment.read())
+                                        encoders.encode_base64(part)
+                                        part.add_header('Content-Disposition', f'attachment; filename={violations_csv_path}')
+                                        message.attach(part)
 
                                 # Send the email
                                 server.sendmail(sender_email, recipient_email, message.as_string())
