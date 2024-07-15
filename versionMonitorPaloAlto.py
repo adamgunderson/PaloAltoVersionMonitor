@@ -17,7 +17,7 @@
 ##                                                                           ##                     ##
 ##                                                                                                  ##
 ##                         Palo Alto Version Alerting for FireMon              ##                   ##
-##                         Version 0.57                                                             ##
+##                         Version 0.58                                                             ##
 ##                                                                                                  ##
 ##                         By Adam Gunderson                                                        ##
 ##                         Adam.Gunderson@FireMon.com                                               ##
@@ -46,6 +46,7 @@ sys.path.append('/usr/lib/firemon/devpackfw/lib/python3.9/site-packages')  # Adj
 import requests
 import re
 import csv
+import os
 from datetime import datetime, timedelta, timezone  # Import the timezone object
 from dateutil import parser  # Import the parser from dateutil
 import smtplib
@@ -78,11 +79,11 @@ device_group_id = 1
 email_enabled = True  # Set to True to enable email sending
 smtp_server = 'localhost'
 smtp_port = 25  # 25 for non-TLS, 587 for TLS
-use_tls = False  # Set to True to use TLS when sending emails
 smtp_username = ''  # Leave empty if not using authentication
 smtp_password = ''  # Leave empty if not using authentication
 sender_email = 'PaloAltoVersionMon@firemon.com'
 recipient_email = 'adam.gunderson@firemon.com'
+use_tls = False  # Set to True to use TLS when sending emails
 
 # Combine alerts into a single email (True) or individual (False)
 send_aggregate_email = True
@@ -200,11 +201,18 @@ def is_device_current(device_id, max_age):
     if device_info_response.status_code == 200:
         device_info_data = device_info_response.json()
         postNormalizationCompleteDate = device_info_data.get('postNormalizationCompleteDate')
+        revision_id = device_info_data.get('id', 'Unknown Revision ID')
 
         if postNormalizationCompleteDate:
             postNormalizationCompleteDate_timestamp = datetime.strptime(postNormalizationCompleteDate, '%Y-%m-%dT%H:%M:%S.%fZ').timestamp()
             age = now - postNormalizationCompleteDate_timestamp
-            return age <= max_age
+            is_current = age <= max_age
+
+            # Log the device revision date and revision ID
+            if logging_enabled:
+                logging.info(f"Device ID: {device_id}, Revision ID: {revision_id}, Revision Date: {postNormalizationCompleteDate}, Current: {is_current}")
+
+            return is_current
 
     # If there's an issue with the API request, return False (assume device is not current)
     return False
@@ -213,18 +221,23 @@ def is_device_current(device_id, max_age):
 def read_eol_dates(csv_file_path):
     eol_dates = {}
     date_formats = ['%B %d, %Y', '%b %d, %Y']  # Define multiple date formats to handle different date formats
-    with open(csv_file_path, 'r') as csvfile:
-        reader = csv.reader(csvfile)
-        next(reader)  # Skip the header row
-        for row in reader:
-            if len(row) < 2:
-                continue  # Skip rows that don't have at least 2 columns
-            for date_format in date_formats:
-                try:
-                    eol_dates[row[0]] = datetime.strptime(row[1], date_format)
-                    break
-                except ValueError:
-                    continue
+    try:
+        with open(csv_file_path, 'r') as csvfile:
+            reader = csv.reader(csvfile)
+            next(reader)  # Skip the header row
+            for row in reader:
+                if len(row) < 2:
+                    continue  # Skip rows that don't have at least 2 columns
+                for date_format in date_formats:
+                    try:
+                        eol_dates[row[0]] = datetime.strptime(row[1], date_format)
+                        break
+                    except ValueError:
+                        continue
+    except FileNotFoundError:
+        print(f"{csv_file_path} not found. Skipping EOL checking for this file.")
+        if logging_enabled:
+            logging.info(f"{csv_file_path} not found. Skipping EOL checking for this file.")
     return eol_dates
 
 # Function to compare sub-versions
@@ -308,7 +321,7 @@ try:
                     if device_id not in timestamps:
                         timestamps[device_id] = {}
 
-                    if not check_eol_only and current_for_version_check:
+                    if current_for_version_check and not check_eol_only:
                         # Store the timestamps in the dictionary if found
                         if wildfire_match:
                             timestamp_str = wildfire_match.group(1)
@@ -539,5 +552,7 @@ except requests.exceptions.RequestException as e:
         logging.error(f"An error occurred during the request: {e}")
 except ValueError as e:
     print(f"Failed to parse JSON response: {e}")
+    if logging_enabled:
+        logging.error(f"Failed to parse JSON response: {e}")
     if logging_enabled:
         logging.error(f"Failed to parse JSON response: {e}")
