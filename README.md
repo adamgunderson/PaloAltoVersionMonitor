@@ -74,7 +74,7 @@ crontab -e
 ```
 > 0 0 1 * * cd /home/firemon $$ /home/firemon/eol-scrape/bin/python /home/firemon/scrape-eol-dates.py
 
- 
-CSV Generation as of July 10 2024:
- - https://firemon.xyz/imports/palo_alto_eol_hw_dates.csv
- - https://firemon.xyz/imports/palo_alto_eol_sw_dates.csv
+To exit the python virtual environemnt type:
+```console
+deactivate
+```
