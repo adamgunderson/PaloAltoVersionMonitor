@@ -26,10 +26,6 @@
 ##    wildfire-release-date, and threat-release-date from api_system_info. It also checks for EOL   ##
 ##    hardware and software versions.                                                               ##
 ##                                                                                                  ##
-##    An import of the control can be downloaded here:                                              ##
-##    https://firemon.xyz/imports/PaloAltoVersionsMonitor.export.json                               ##
-##                                                                                                  ##
-##                                                                                                  ##
 ##    DISCLAIMER:                                                                                   ##
 ##    The following Python script is provided "AS IS" without warranty of any kind.                 ##
 ##    Users should use this script at their own risk. The author assumes no responsibility          ##
