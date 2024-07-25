@@ -74,7 +74,7 @@ crontab -e
 ```
 > 0 0 1 * * cd /home/firemon $$ /home/firemon/eol-scrape/bin/python /home/firemon/scrape-eol-dates.py > /dev/null 2>&1
 
-To exit the python virtual environemnt type:
+To exit the python virtual environment type:
 ```console
 deactivate
 ```
