@@ -17,7 +17,7 @@
 ##                                                                           ##                     ##
 ##                                                                                                  ##
 ##                         Palo Alto Version Alerting for FireMon              ##                   ##
-##                         Version 0.58                                                             ##
+##                         Version 0.60                                                             ##
 ##                                                                                                  ##
 ##                         By Adam Gunderson                                                        ##
 ##                         Adam.Gunderson@FireMon.com                                               ##
@@ -53,6 +53,7 @@ from email import encoders
 import time
 import urllib3
 import logging
+from logging.handlers import RotatingFileHandler
 
 #################################################
 ##             START CONFIGURATION             ##
@@ -103,6 +104,9 @@ ignore_certificate = True
 # Enable logging and set the log file path
 logging_enabled = True
 log_file_path = 'palo_alto_version_monitor.log'
+log_level = logging.INFO  # Can be DEBUG, INFO, WARNING, ERROR, CRITICAL
+max_log_size = 5 * 1024 * 1024  # 5 MB
+backup_count = 3  # Number of backup log files to keep
 
 # Option to save violations as CSV
 save_violations_csv = True
@@ -117,55 +121,6 @@ attach_csv_to_email = True
 # Option to only alert for EOL violations in the next X months
 eol_alert_window_months = 6
 
-# Define a mapping of timezone abbreviations to UTC offsets.
-timezone_offsets = {
-    'PST': '-0800',  # Pacific Standard Time
-    'PDT': '-0700',  # Pacific Daylight Time
-    'CAT': '+0200',  # Central Africa Time
-    'EET': '+0200',  # Eastern European Time
-    'IDT': '+0300',  # Israel Daylight Time
-    'GET': '+0400',  # Georgia Standard Time
-    'AFT': '+0430',  # Afghanistan Time
-    'TMT': '+0500',  # Turkmenistan Time
-    'JST': '+0900',  # Japan Standard Time
-    'EDT': '-0400',  # Eastern Daylight Time
-    'CDT': '-0500',  # Central Daylight Time
-    'EST': '-0500',  # Eastern Standard Time
-    'CST': '-0600',  # Central Standard Time
-    'MDT': '-0600',  # Mountain Daylight Time
-    'MST': '-0700',  # Mountain Standard Time
-    'PDT': '-0700',  # Pacific Daylight Time
-    'PST': '-0800',  # Pacific Standard Time
-    'HST': '-1000',  # Hawaii Standard Time
-    'UTC': '+0000',  # Coordinated Universal Time
-    'GMT': '+0000',  # Greenwich Mean Time
-    'CET': '+0100',  # Central European Time
-    'CEST': '+0200',  # Central European Summer Time
-    'MSK': '+0300',  # Moscow Standard Time
-    'IST': '+0530',  # Indian Standard Time
-    'NPT': '+0545',  # Nepal Time
-    'SGT': '+0800',  # Singapore Time
-    'AWST': '+0800',  # Australian Western Standard Time
-    'AEST': '+1000',  # Australian Eastern Standard Time
-    'NZST': '+1200',  # New Zealand Standard Time
-    'ART': '-0300',  # Argentina Time
-    'BRT': '-0300',  # Brasília Time
-    'CLT': '-0400',  # Chile Standard Time
-    'EAST': '+1000',  # Eastern Australia Standard Time
-    'FJT': '+1300',  # Fiji Time
-    'GST': '+0400',  # Gulf Standard Time
-    'HKT': '+0800',  # Hong Kong Time
-    'NAT': '-0330',  # Newfoundland Standard Time
-    'NST': '-0330',  # Newfoundland Standard Time
-    'PET': '-0500',  # Peru Time
-    'SAST': '+0200',  # South Africa Standard Time
-    'UYT': '-0300',  # Uruguay Standard Time
-    'WAT': '+0100',  # West Africa Time
-    'WET': '+0000',  # Western European Time
-    'WIT': '+0900',  # Eastern Indonesian Time
-    # Add more timezones as needed
-}
-
 # Paths to the CSV files containing EOL dates
 hw_eol_file_path = 'palo_alto_eol_hw_dates.csv'
 sw_eol_file_path = 'palo_alto_eol_sw_dates.csv'
@@ -177,11 +132,27 @@ sw_eol_file_path = 'palo_alto_eol_sw_dates.csv'
 # Disable InsecureRequestWarning (ignore certificate warnings)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-smtp_authentication_required = bool(smtp_username)  # True if username is provided
-
-# Setup logging
+# Setup logging with rotation
 if logging_enabled:
-    logging.basicConfig(filename=log_file_path, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger('PaloAltoVersionMonitor')
+    logger.setLevel(log_level)
+    
+    # Create a rotating file handler
+    file_handler = RotatingFileHandler(
+        log_file_path, 
+        maxBytes=max_log_size, 
+        backupCount=backup_count
+    )
+    
+    # Create a formatter and add it to the handler
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    file_handler.setFormatter(formatter)
+    
+    # Add the handler to the logger
+    logger.addHandler(file_handler)
+else:
+    logger = logging.getLogger('PaloAltoVersionMonitor')
+    logger.addHandler(logging.NullHandler())
 
 # Define the authentication URL
 auth_url = f'{host_url}/securitymanager/api/authentication/login'
@@ -205,8 +176,7 @@ def is_device_current(device_id, max_age):
             is_current = age <= max_age
 
             # Log the device revision date and revision ID
-            if logging_enabled:
-                logging.info(f"Device ID: {device_id}, Revision ID: {revision_id}, Revision Date: {postNormalizationCompleteDate}, Current: {is_current}")
+            logger.info(f"Device ID: {device_id}, Revision ID: {revision_id}, Revision Date: {postNormalizationCompleteDate}, Current: {is_current}")
 
             return is_current
 
@@ -231,9 +201,7 @@ def read_eol_dates(csv_file_path):
                     except ValueError:
                         continue
     except FileNotFoundError:
-        print(f"{csv_file_path} not found. Skipping EOL checking for this file.")
-        if logging_enabled:
-            logging.info(f"{csv_file_path} not found. Skipping EOL checking for this file.")
+        logger.info(f"{csv_file_path} not found. Skipping EOL checking for this file.")
     return eol_dates
 
 # Function to compare sub-versions
@@ -252,12 +220,28 @@ def within_next_months(date, months):
     future_date = datetime.now() + timedelta(days=months * 30)  # Approximate calculation of months
     return date <= future_date
 
+# Function to parse timestamps
+def parse_timestamp(timestamp_str):
+    try:
+        # Parse the timestamp using dateutil
+        dt = parser.parse(timestamp_str)
+        
+        # If the parsed datetime is naive (no timezone info), assume it's in UTC
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        logger.debug(f"Parsed timestamp: {timestamp_str} to UTC: {dt.isoformat()}")
+        return dt.astimezone(timezone.utc).timestamp()
+    except ValueError as e:
+        logger.error(f"Error parsing timestamp: {timestamp_str}. Error: {e}")
+        return None
+
 # Read EOL dates from CSV files
 hw_eol_dates = read_eol_dates(hw_eol_file_path)
 sw_eol_dates = read_eol_dates(sw_eol_file_path)
 
 try:
     # Authenticate to FireMon
+    logger.info("Authenticating to FireMon...")
     auth_payload = {
         'username': username,
         'password': password
@@ -271,6 +255,8 @@ try:
 
         # Extract the auth token from the response
         auth_token = auth_data.get('token', '')
+
+        logger.info("Authentication successful")
 
         # Define the API URL and headers with the obtained auth token
         url = f'{host_url}/securitymanager/api/domain/1/control/{control_uuid}/execute/devicegroup/{device_group_id}?allControlResults=true'
@@ -318,31 +304,34 @@ try:
                         timestamps[device_id] = {}
 
                     if current_for_version_check and not check_eol_only:
-                        # Store the timestamps in the dictionary if found
+                        # Parse and store the timestamps
                         if wildfire_match:
-                            timestamp_str = wildfire_match.group(1)
-                            timestamp = parser.parse(timestamp_str).timestamp()
-                            timestamps[device_id]['wildfire-release-date'] = timestamp
-                            if timestamp < WildfireMaxAge:
-                                violations.append((device_id, 'wildfire-release-date'))
+                            timestamp = parse_timestamp(wildfire_match.group(1))
+                            if timestamp:
+                                timestamps[device_id]['wildfire-release-date'] = timestamp
+                                if timestamp < WildfireMaxAge:
+                                    violations.append((device_id, 'wildfire-release-date'))
+                        
                         if av_match:
-                            timestamp_str = av_match.group(1)
-                            timestamp = parser.parse(timestamp_str).timestamp()
-                            timestamps[device_id]['av-release-date'] = timestamp
-                            if timestamp < AVMaxAge:
-                                violations.append((device_id, 'av-release-date'))
+                            timestamp = parse_timestamp(av_match.group(1))
+                            if timestamp:
+                                timestamps[device_id]['av-release-date'] = timestamp
+                                if timestamp < AVMaxAge:
+                                    violations.append((device_id, 'av-release-date'))
+                        
                         if app_match:
-                            timestamp_str = app_match.group(1)
-                            timestamp = parser.parse(timestamp_str).timestamp()
-                            timestamps[device_id]['app-release-date'] = timestamp
-                            if timestamp < AppMaxAge:
-                                violations.append((device_id, 'app-release-date'))
+                            timestamp = parse_timestamp(app_match.group(1))
+                            if timestamp:
+                                timestamps[device_id]['app-release-date'] = timestamp
+                                if timestamp < AppMaxAge:
+                                    violations.append((device_id, 'app-release-date'))
+                        
                         if threat_match:
-                            timestamp_str = threat_match.group(1)
-                            timestamp = parser.parse(timestamp_str).timestamp()
-                            timestamps[device_id]['threat-release-date'] = timestamp
-                            if timestamp < ThreatMaxAge:
-                                violations.append((device_id, 'threat-release-date'))
+                            timestamp = parse_timestamp(threat_match.group(1))
+                            if timestamp:
+                                timestamps[device_id]['threat-release-date'] = timestamp
+                                if timestamp < ThreatMaxAge:
+                                    violations.append((device_id, 'threat-release-date'))
 
                     # Check EOL for software version
                     if sw_version_match and current_for_eol_check:
@@ -361,17 +350,17 @@ try:
                             eol_violations.add((device_id, 'hardware', model, eol_date))
 
                     # Log each device's data regardless of violations
-                    if logging_enabled:
-                        logging.info(f"Checked device {device_id}: {device_summaries.get(device_id, 'Unknown Device')}, "
-                                     f"Wildfire Date: {timestamps.get(device_id, {}).get('wildfire-release-date', 'N/A')}, "
-                                     f"AV Date: {timestamps.get(device_id, {}).get('av-release-date', 'N/A')}, "
-                                     f"App Date: {timestamps.get(device_id, {}).get('app-release-date', 'N/A')}, "
-                                     f"Threat Date: {timestamps.get(device_id, {}).get('threat-release-date', 'N/A')}, "
-                                     f"Software Version: {sw_version_match.group(1) if sw_version_match else 'N/A'}, "
-                                     f"Model: {model_match.group(1) if model_match else 'N/A'}")
+                    logger.info(f"Checked device {device_id}: {device_summaries.get(device_id, 'Unknown Device')}, "
+                                f"Wildfire Date: {timestamps.get(device_id, {}).get('wildfire-release-date', 'N/A')}, "
+                                f"AV Date: {timestamps.get(device_id, {}).get('av-release-date', 'N/A')}, "
+                                f"App Date: {timestamps.get(device_id, {}).get('app-release-date', 'N/A')}, "
+                                f"Threat Date: {timestamps.get(device_id, {}).get('threat-release-date', 'N/A')}, "
+                                f"Software Version: {sw_version_match.group(1) if sw_version_match else 'N/A'}, "
+                                f"Model: {model_match.group(1) if model_match else 'N/A'}")
 
             # Check if there are any violations
             if violations or eol_violations:
+                logger.warning("Violations detected")
                 summary = "Outdated Palo Alto Releases and EOL Devices Detected:\n"
                 for device_id, timestamp_name in violations:
                     timestamp_value = timestamps[device_id][timestamp_name]
@@ -392,8 +381,7 @@ try:
 
                 print(summary)  # Output the summary
 
-                if logging_enabled:
-                    logging.info(summary)
+                logger.info(summary)
 
                 # Save violations to CSV if enabled
                 if save_violations_csv:
@@ -425,8 +413,7 @@ try:
                                 'EOL Date': eol_date_str
                             })
 
-                    if logging_enabled:
-                        logging.info(f"Violations saved to {violations_csv_path}")
+                    logger.info(f"Violations saved to {violations_csv_path}")
 
                 # Send email alert(s) if email_enabled is True and SMTP authentication is not required or provided
                 if email_enabled and (not smtp_authentication_required or (smtp_authentication_required and smtp_username and smtp_password)):
@@ -464,11 +451,11 @@ try:
 
                             # Send the email
                             server.sendmail(sender_email, recipient_email, message.as_string())
+                            logger.info("Aggregate email alert sent with out of date Palo Alto releases and EOL devices")
                             print("Aggregate email alert sent with out of date Palo Alto releases and EOL devices")
                         except Exception as e:
+                            logger.error(f"Failed to send aggregate email alert: {e}")
                             print(f"Failed to send aggregate email alert: {e}")
-                            if logging_enabled:
-                                logging.error(f"Failed to send aggregate email alert: {e}")
                     else:
                         # Send individual email alerts for each violation
                         for device_id, timestamp_name in violations:
@@ -510,45 +497,34 @@ try:
 
                                 # Send the email
                                 server.sendmail(sender_email, recipient_email, message.as_string())
+                                logger.info(f"Email alert sent for Device: {device_name} - {timestamp_name}")
                                 print(f"Email alert sent for Device: {device_name} - {timestamp_name}")
-                                if logging_enabled:
-                                    logging.info(f"Email alert sent for Device: {device_name} - {timestamp_name}")
                             except Exception as e:
+                                logger.error(f"Failed to send email alert: {e}")
                                 print(f"Failed to send email alert: {e}")
-                                if logging_enabled:
-                                    logging.error(f"Failed to send email alert: {e}")
                 else:
                     if send_aggregate_email:
                         print(summary)  # Output the summary if email_enabled is False
-                        if logging_enabled:
-                            logging.info("No email sent. Summary output to console.")
+                        logger.info("No email sent. Summary output to console.")
                     else:
                         print("Outdated Releases:\n")
                         print(summary)  # Output the summary if email_enabled is False
-                        if logging_enabled:
-                            logging.info("No email sent. Individual summaries output to console.")
+                        logger.info("No email sent. Individual summaries output to console.")
             else:
+                logger.info("No violations found.")
                 if not email_enabled and send_aggregate_email:
                     print("No violations found.")
                 elif not violations:
                     print("No violations found.")
-                if logging_enabled:
-                    logging.info("No violations found.")
         else:
+            logger.error(f"API request failed with status code: {response.status_code}")
             print(f"API request failed with status code: {response.status_code}")
-            if logging_enabled:
-                logging.error(f"API request failed with status code: {response.status_code}")
     else:
+        logger.error(f"Authentication request failed with status code: {auth_response.status_code}")
         print(f"Authentication request failed with status code: {auth_response.status_code}")
-        if logging_enabled:
-            logging.error(f"Authentication request failed with status code: {auth_response.status_code}")
 except requests.exceptions.RequestException as e:
+    logger.critical(f"An error occurred during the request: {e}")
     print(f"An error occurred during the request: {e}")
-    if logging_enabled:
-        logging.error(f"An error occurred during the request: {e}")
 except ValueError as e:
+    logger.error(f"Failed to parse JSON response: {e}")
     print(f"Failed to parse JSON response: {e}")
-    if logging_enabled:
-        logging.error(f"Failed to parse JSON response: {e}")
-    if logging_enabled:
-        logging.error(f"Failed to parse JSON response: {e}")
