@@ -17,7 +17,7 @@
 ##                                                                           ##                     ##
 ##                                                                                                  ##
 ##                         Palo Alto Version Alerting for FireMon              ##                   ##
-##                         Version 0.60                                                             ##
+##                         Version 0.58                                                             ##
 ##                                                                                                  ##
 ##                         By Adam Gunderson                                                        ##
 ##                         Adam.Gunderson@FireMon.com                                               ##
@@ -43,8 +43,8 @@ import requests
 import re
 import csv
 import os
-from datetime import datetime, timedelta, timezone  # Import the timezone object
-from dateutil import parser  # Import the parser from dateutil
+from datetime import datetime, timedelta, timezone
+from dateutil import parser, tz
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -61,9 +61,6 @@ from logging.handlers import RotatingFileHandler
 
 # FireMon Host (Replace with your host URL)
 host_url = 'https://localhost'
-
-# Option to ignore certificate validation for FireMon (set to True to ignore validation, helpful if using self-signed certs)
-ignore_certificate = True
 
 # Security Manager Username and Password for authentication
 username = 'firemon'
@@ -88,9 +85,6 @@ use_tls = False  # Set to True to use TLS when sending emails
 # Combine alerts into a single email (True) or individual (False)
 send_aggregate_email = True
 
-# Option to attach CSV to email
-attach_csv_to_email = True
-
 # Define time thresholds for WildFire, AV, Threat, and App update timestamps.
 now = time.time()
 WildfireMaxAge = now - 2 * 3600  # 2 hours in seconds
@@ -104,6 +98,9 @@ RevisionMaxAge = 2 * 3600  # 2 hours in seconds
 # Define the maximum age for device revision specifically for EOL checks (in seconds, set to None for unlimited/disabled).
 EOLRevisionMaxAge = None  # Unlimited/disabled
 
+# Option to ignore certificate validation for FireMon (set to True to ignore validation, helpful if using self-signed certs)
+ignore_certificate = True
+
 # Enable logging and set the log file path
 logging_enabled = True
 log_file_path = 'palo_alto_version_monitor.log'
@@ -113,15 +110,18 @@ backup_count = 3  # Number of backup log files to keep
 
 # Option to save violations as CSV
 save_violations_csv = True
-violations_csv_path = 'PaloAltoViolations.csv'
+violations_csv_path = 'violations.csv'
 
 # Option to only check EOL violations
 check_eol_only = False
 
+# Option to attach CSV to email
+attach_csv_to_email = True
+
 # Option to only alert for EOL violations in the next X months
 eol_alert_window_months = 6
 
-# Paths to the input CSV files containing EOL dates
+# Paths to the CSV files containing EOL dates
 hw_eol_file_path = 'palo_alto_eol_hw_dates.csv'
 sw_eol_file_path = 'palo_alto_eol_sw_dates.csv'
 
@@ -131,6 +131,121 @@ sw_eol_file_path = 'palo_alto_eol_sw_dates.csv'
 
 # Disable InsecureRequestWarning (ignore certificate warnings)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+smtp_authentication_required = bool(smtp_username)  # True if username is provided
+
+from dateutil.tz import gettz
+
+tzinfos = {
+    # North America
+    "EST": gettz("America/New_York"),
+    "EDT": gettz("America/New_York"),
+    "CST": gettz("America/Chicago"),
+    "CDT": gettz("America/Chicago"),
+    "MST": gettz("America/Denver"),
+    "MDT": gettz("America/Denver"),
+    "PST": gettz("America/Los_Angeles"),
+    "PDT": gettz("America/Los_Angeles"),
+    "AKST": gettz("America/Anchorage"),
+    "AKDT": gettz("America/Anchorage"),
+    "HST": gettz("Pacific/Honolulu"),
+    "HAST": gettz("Pacific/Honolulu"),
+    "HADT": gettz("Pacific/Honolulu"),
+    
+    # South America
+    "ART": gettz("America/Argentina/Buenos_Aires"),
+    "BRT": gettz("America/Sao_Paulo"),
+    "BRST": gettz("America/Sao_Paulo"),
+    
+    # Europe
+    "GMT": gettz("Europe/London"),
+    "BST": gettz("Europe/London"),
+    "CET": gettz("Europe/Paris"),
+    "CEST": gettz("Europe/Paris"),
+    "EET": gettz("Europe/Helsinki"),
+    "EEST": gettz("Europe/Helsinki"),
+    
+    # Asia
+    "IST": gettz("Asia/Kolkata"),
+    "HKT": gettz("Asia/Hong_Kong"),
+    "SGT": gettz("Asia/Singapore"),
+    "JST": gettz("Asia/Tokyo"),
+    "KST": gettz("Asia/Seoul"),
+    "CST": gettz("Asia/Shanghai"),  # Note: CST is used for both China Standard Time and Central Standard Time
+    
+    # Australia
+    "AWST": gettz("Australia/Perth"),
+    "ACST": gettz("Australia/Adelaide"),
+    "ACDT": gettz("Australia/Adelaide"),
+    "AEST": gettz("Australia/Sydney"),
+    "AEDT": gettz("Australia/Sydney"),
+    
+    # New Zealand
+    "NZST": gettz("Pacific/Auckland"),
+    "NZDT": gettz("Pacific/Auckland"),
+    
+    # Others
+    "UTC": gettz("UTC"),
+    "Z": gettz("UTC"),  # Sometimes used to denote UTC
+    
+    # Middle East
+    "IDT": gettz("Asia/Jerusalem"),
+    "AST": gettz("Asia/Riyadh"),
+    
+    # Africa
+    "WAT": gettz("Africa/Lagos"),
+    "CAT": gettz("Africa/Johannesburg"),
+    "EAT": gettz("Africa/Nairobi"),
+    
+    # South Asia
+    "PKT": gettz("Asia/Karachi"),
+    "BST": gettz("Asia/Dhaka"),  # Bangladesh Standard Time
+    
+    # Southeast Asia
+    "WIB": gettz("Asia/Jakarta"),
+    "WITA": gettz("Asia/Makassar"),
+    "WIT": gettz("Asia/Jayapura"),
+    
+    # Central Asia
+    "ALMT": gettz("Asia/Almaty"),
+    
+    # Russia
+    "MSK": gettz("Europe/Moscow"),
+    "SAMT": gettz("Europe/Samara"),
+    "YEKT": gettz("Asia/Yekaterinburg"),
+    "OMST": gettz("Asia/Omsk"),
+    "KRAT": gettz("Asia/Krasnoyarsk"),
+    "IRKT": gettz("Asia/Irkutsk"),
+    "YAKT": gettz("Asia/Yakutsk"),
+    "VLAT": gettz("Asia/Vladivostok"),
+    
+    # Numeric UTC offsets
+    "UTC+0": gettz("UTC"),
+    "UTC+1": gettz("Etc/GMT-1"),
+    "UTC+2": gettz("Etc/GMT-2"),
+    "UTC+3": gettz("Etc/GMT-3"),
+    "UTC+4": gettz("Etc/GMT-4"),
+    "UTC+5": gettz("Etc/GMT-5"),
+    "UTC+6": gettz("Etc/GMT-6"),
+    "UTC+7": gettz("Etc/GMT-7"),
+    "UTC+8": gettz("Etc/GMT-8"),
+    "UTC+9": gettz("Etc/GMT-9"),
+    "UTC+10": gettz("Etc/GMT-10"),
+    "UTC+11": gettz("Etc/GMT-11"),
+    "UTC+12": gettz("Etc/GMT-12"),
+    "UTC-1": gettz("Etc/GMT+1"),
+    "UTC-2": gettz("Etc/GMT+2"),
+    "UTC-3": gettz("Etc/GMT+3"),
+    "UTC-4": gettz("Etc/GMT+4"),
+    "UTC-5": gettz("Etc/GMT+5"),
+    "UTC-6": gettz("Etc/GMT+6"),
+    "UTC-7": gettz("Etc/GMT+7"),
+    "UTC-8": gettz("Etc/GMT+8"),
+    "UTC-9": gettz("Etc/GMT+9"),
+    "UTC-10": gettz("Etc/GMT+10"),
+    "UTC-11": gettz("Etc/GMT+11"),
+    "UTC-12": gettz("Etc/GMT+12"),
+}
 
 # Setup logging with rotation
 if logging_enabled:
@@ -153,6 +268,8 @@ if logging_enabled:
 else:
     logger = logging.getLogger('PaloAltoVersionMonitor')
     logger.addHandler(logging.NullHandler())
+
+
 
 # Define the authentication URL
 auth_url = f'{host_url}/securitymanager/api/authentication/login'
@@ -223,8 +340,8 @@ def within_next_months(date, months):
 # Function to parse timestamps
 def parse_timestamp(timestamp_str):
     try:
-        # Parse the timestamp using dateutil
-        dt = parser.parse(timestamp_str)
+        # Parse the timestamp using dateutil with tzinfos
+        dt = parser.parse(timestamp_str, tzinfos=tzinfos)
         
         # If the parsed datetime is naive (no timezone info), assume it's in UTC
         if dt.tzinfo is None:
