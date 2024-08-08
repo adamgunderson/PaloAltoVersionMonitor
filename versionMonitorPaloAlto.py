@@ -17,7 +17,7 @@
 ##                                                                           ##                     ##
 ##                                                                                                  ##
 ##                         Palo Alto Version Alerting for FireMon              ##                   ##
-##                         Version 0.58                                                             ##
+##                         Version 0.61                                                             ##
 ##                                                                                                  ##
 ##                         By Adam Gunderson                                                        ##
 ##                         Adam.Gunderson@FireMon.com                                               ##
@@ -62,6 +62,9 @@ from logging.handlers import RotatingFileHandler
 # FireMon Host (Replace with your host URL)
 host_url = 'https://localhost'
 
+# Option to ignore certificate validation for FireMon (set to True to ignore validation, helpful if using self-signed certs)
+ignore_certificate = True
+
 # Security Manager Username and Password for authentication
 username = 'firemon'
 password = 'firemon'
@@ -85,6 +88,9 @@ use_tls = False  # Set to True to use TLS when sending emails
 # Combine alerts into a single email (True) or individual (False)
 send_aggregate_email = True
 
+# Option to attach CSV to email
+attach_csv_to_email = True
+
 # Define time thresholds for WildFire, AV, Threat, and App update timestamps.
 now = time.time()
 WildfireMaxAge = now - 2 * 3600  # 2 hours in seconds
@@ -98,8 +104,19 @@ RevisionMaxAge = 2 * 3600  # 2 hours in seconds
 # Define the maximum age for device revision specifically for EOL checks (in seconds, set to None for unlimited/disabled).
 EOLRevisionMaxAge = None  # Unlimited/disabled
 
-# Option to ignore certificate validation for FireMon (set to True to ignore validation, helpful if using self-signed certs)
-ignore_certificate = True
+# Option to save violations as CSV output
+save_violations_csv = True
+violations_csv_path = 'violations.csv'
+
+# Option to only check EOL violations
+check_eol_only = False
+
+# Option to only alert for EOL violations in the next X months
+eol_alert_window_months = 6
+
+# Paths to the input CSV files containing EOL dates
+hw_eol_file_path = 'palo_alto_eol_hw_dates.csv'
+sw_eol_file_path = 'palo_alto_eol_sw_dates.csv'
 
 # Enable logging and set the log file path
 logging_enabled = True
@@ -107,23 +124,6 @@ log_file_path = 'palo_alto_version_monitor.log'
 log_level = logging.INFO  # Can be DEBUG, INFO, WARNING, ERROR, CRITICAL
 max_log_size = 5 * 1024 * 1024  # 5 MB
 backup_count = 3  # Number of backup log files to keep
-
-# Option to save violations as CSV
-save_violations_csv = True
-violations_csv_path = 'violations.csv'
-
-# Option to only check EOL violations
-check_eol_only = False
-
-# Option to attach CSV to email
-attach_csv_to_email = True
-
-# Option to only alert for EOL violations in the next X months
-eol_alert_window_months = 6
-
-# Paths to the CSV files containing EOL dates
-hw_eol_file_path = 'palo_alto_eol_hw_dates.csv'
-sw_eol_file_path = 'palo_alto_eol_sw_dates.csv'
 
 #################################################
 ##               END CONFIGURATION             ##
