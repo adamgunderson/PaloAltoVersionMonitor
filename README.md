@@ -1,15 +1,15 @@
 # Palo Alto Version Monitor for FireMon
-Monitors for EOL software, hardware, as well as out of date releases for Antivirus, Wildfire and Threat.
+Monitors for EOL software and hardware, as well as outdated releases for Antivirus, WildFire, and Threat.
 
 ## versionMonitorPaloAlto.py
 This script uses a regex conrol that checks timestamps for av-release-date, wildfire-release-date, and threat-release-date from api_system_info. It also checks for EOL hardware and software versions. 
 
 An import of the control can be downloaded here:
-https://firemon.xyz/imports/PaloAltoVersionsMonitor.export.json 
+https://github.com/adamgunderson/PaloAltoVersionMonitor/blob/main/PaloAltoVersionsMonitor.export.json
 
 Device Retrievals in FireMon Security Manager must be scheduled relative to the lowest alert threshold. The script variable for RevisionMaxAge as a fail-safe to prevent false positives in cases where FireMon does not have a recent revision to check.
 
-EOL models and dates stored in CSV files that this script references. Use **scrape-eol-dates.py** to generate the CSV's.
+EOL models and dates are stored in CSV files that this script references. Alternatively use **scrape-eol-dates.py** to generate the CSV's.
 
 This script can be ran on automatically on a schedule using cron. An example cron expression to run this script every hour is below. 
 > 0 * * * * /usr/bin/python3.9 /home/admin/versionMonitorPaloAlto.py > /dev/null 2>&1 
