@@ -77,7 +77,6 @@ app_max_age = config['app_max_age_days'] * 86400
 revision_max_age = config['revision_max_age_hours'] * 3600
 save_violations_csv = config['save_violations_csv']
 violations_csv_path = config['violations_csv_path']
-check_eol_only = config['check_eol_only']
 eol_alert_window_months = config['eol_alert_window_months']
 hw_eol_file_path = config['hw_eol_file_path']
 sw_eol_file_path = config['sw_eol_file_path']
