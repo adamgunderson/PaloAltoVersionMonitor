@@ -1,0 +1,72 @@
+# FireMon Host (Replace with your host URL if not running from app server, otherwise localhost is fine)
+host_url: 'https://localhost'
+
+# Option to ignore certificate validation for FireMon (set to True to ignore validation, helpful if using self-signed certs)
+ignore_certificate: True
+
+# Security Manager Username and Password for authentication
+username: 'firemon'
+password: 'firemon'
+
+# Control UUID (Replace with your control UUID)
+control_uuid: '14d888ce-22d6-4942-95c0-9f393731fb5e'
+
+# Device group to check against
+device_group_id: 1
+
+# Email configuration
+email_enabled: True  # Set to True to enable email sending
+smtp_server: 'localhost'
+smtp_port: 25  # 25 for non-TLS, 587 for TLS
+smtp_username: ''  # Leave empty if not using authentication
+smtp_password: ''  # Leave empty if not using authentication
+sender_email: 'PaloAltoVersionMon@firemon.com'
+recipient_email: 'adam.gunderson@firemon.com'
+use_tls: False  # Set to True to use TLS when sending emails
+
+# Combine alerts into a single email (True) or individual (False)
+send_aggregate_email: True
+
+# Option to attach CSV to email
+attach_csv_to_email: True
+
+# Define maximum age thresholds for WildFire, AV, Threat, and App update timestamps.
+wildfire_max_age_hours: 2
+av_max_age_days: 2
+threat_max_age_days: 8
+app_max_age_days: 8
+
+# Define the maximum age for device revision in hours. This prevents false positives for devices that FireMon hasn't recently connected to.
+revision_max_age_hours: 2
+
+# Define the maximum age for device revision specifically for EOL checks (in hours, set to None for unlimited/disabled).
+eol_revision_max_age: None  # Unlimited/disabled
+
+# Option to save violations as CSV output
+save_violations_csv: True
+violations_csv_path: 'violations.csv'
+
+# Option to only alert for EOL violations in the next X months
+eol_alert_window_months: 6
+
+# Paths to the input CSV files containing EOL dates
+hw_eol_file_path: 'palo_alto_eol_hw_dates.csv'
+sw_eol_file_path: 'palo_alto_eol_sw_dates.csv'
+
+# Check options
+check_update_ages: True
+check_software_eol: True
+check_hardware_eol: True
+check_vulnerabilities: True
+cvss_threshold: 0  # Ignore CVEs with a CVSS score below this value
+
+# Logging options
+logging_enabled: True
+log_level: INFO
+log_file_path: palo_alto_version_monitor.log
+max_log_size_mb: 10
+backup_count: 5
+console_logging: True  # New option to enable console logging
+
+# Vendor API and CVE Checking configuration
+firemon_max_workers: 10  # Maximum number of worker threads for FireMon API calls
