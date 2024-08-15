@@ -45,9 +45,8 @@ Or set up a cron job for automatic execution. For example, to run hourly:
 0 * * * * /usr/bin/python3 /path/to/versionMonitorPaloAlto.py > /dev/null 2>&1
 ```
 
-### 2. scrape-eol-dates.py
-
-This script generates CSV files containing EOL dates for hardware models and software versions. It scrapes this information from Palo Alto Networks' official documentation.
+### 2. scrape-eol-dates.py (optional)
+This script generates two CSV files: `palo_alto_eol_hw_dates.csv` and `palo_alto_eol_sw_dates.csv`, containing EOL dates for hardware models and software versions respectively. It scrapes this information from Palo Alto Networks' official documentation. As an alternative to running this script, you can use the pre-generated CSV files provided in this repository.
 
 #### Setup
 
