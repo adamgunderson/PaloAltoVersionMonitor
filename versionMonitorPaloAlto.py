@@ -444,15 +444,6 @@ try:
             
             device_summaries = {d['deviceId']: (d['deviceName'], d.get('deviceManagementIp', 'Unknown IP')) for d in data.get('deviceSummaries', [])}
 
-            # Add this new section to capture software versions
-            sw_versions = {}
-            for match in data.get('regexMatches', []):
-                line = match.get('line', '')
-                device_id = match.get('deviceId', None)
-                sw_version_match = re.search(r'<sw-version>(.*?)</sw-version>', line)
-                if sw_version_match:
-                    sw_versions[device_id] = sw_version_match.group(1)
-
             timestamps = {}
             violations = []
             eol_violations = set()
@@ -472,7 +463,13 @@ try:
                     av_match = re.search(r'<av-release-date>(.*?)</av-release-date>', line)
                     app_match = re.search(r'<app-release-date>(.*?)</app-release-date>', line)
                     threat_match = re.search(r'<threat-release-date>(.*?)</threat-release-date>', line)
-                    sw_version = sw_versions.get(device_id, 'N/A')
+                    sw_version_match = re.search(r'<sw-version>(.*?)</sw-version>', line)
+                    if sw_version_match:
+                        sw_version = sw_version_match.group(1)
+                        sw_versions[device_id] = sw_version
+                        logger.info(f"Captured software version for device {device_id}: {sw_version}")
+                    else:
+                        logger.warning(f"No software version found for device {device_id} in line: {line}")
                     model_match = re.search(r'<model>(.*?)</model>', line)
 
                     if device_id not in timestamps:
