@@ -474,7 +474,7 @@ try:
                     if device_id not in timestamps:
                         timestamps[device_id] = {}
 
-                    if current_for_version_check and not check_eol_only:
+                    if current_for_version_check:
                         if wildfire_match:
                             timestamp = parse_timestamp(wildfire_match.group(1))
                             if timestamp:
