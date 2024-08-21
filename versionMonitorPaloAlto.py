@@ -25,6 +25,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict, deque
 from threading import Lock
 from urllib.parse import quote
+import traceback
 
 # Load configuration from YAML file
 try:
@@ -223,37 +224,30 @@ def format_time_difference(seconds):
         return f"{minutes} minutes"
 
 # Function to check if a device's revision is current based on its age
-def is_device_current(device_id, max_age):
+def is_device_current(device_id, max_age, device_summaries):
     logger.debug(f"Checking if device {device_id} is current. Max age: {max_age} seconds")
     if max_age is None:
         logger.debug(f"Device {device_id}: No max age set, considering current")
         return True
     
-    device_info_url = f'{host_url}/securitymanager/api/domain/1/device/{device_id}/rev/latest'
-    logger.debug(f"Fetching device info from: {device_info_url}")
-    try:
-        device_info_response = requests.get(device_info_url, headers=headers, verify=not ignore_certificate)
-    except requests.RequestException as e:
-        logger.error(f"Error fetching device info for {device_id}: {e}")
-        return False
-
-    if device_info_response.status_code == 200:
-        device_info_data = device_info_response.json()
-        postNormalizationCompleteDate = device_info_data.get('postNormalizationCompleteDate')
-        revision_id = device_info_data.get('id', 'Unknown Revision ID')
-
-        if postNormalizationCompleteDate:
-            postNormalizationCompleteDate_timestamp = datetime.strptime(postNormalizationCompleteDate, '%Y-%m-%dT%H:%M:%S.%fZ').timestamp()
-            age = now - postNormalizationCompleteDate_timestamp
-            is_current = age <= max_age if max_age is not None else True
-
-            logger.info(f"Device ID: {device_id}, Revision ID: {revision_id}, Revision Date: {postNormalizationCompleteDate}, Age: {age:.2f} seconds, Current: {is_current}")
-            return is_current
+    # Try both int and str versions of the device_id
+    device_info = device_summaries.get(device_id) or device_summaries.get(str(device_id)) or device_summaries.get(int(device_id))
+    if device_info:
+        last_revision = device_info.get('last_revision')
+        if last_revision:
+            try:
+                last_revision_timestamp = datetime.strptime(last_revision, '%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=timezone.utc).timestamp()
+                age = now - last_revision_timestamp
+                is_current = age <= max_age
+                logger.info(f"Device ID: {device_id}, Last Revision: {last_revision}, Age: {age:.2f} seconds, Current: {is_current}")
+                return is_current
+            except ValueError as e:
+                logger.error(f"Error parsing lastRevision for device {device_id}: {e}")
         else:
-            logger.warning(f"Device {device_id}: No postNormalizationCompleteDate found")
+            logger.warning(f"Device {device_id}: No lastRevision found in device summary")
     else:
-        logger.error(f"Failed to fetch device info for {device_id}. Status code: {device_info_response.status_code}")
-
+        logger.warning(f"Device {device_id}: No device summary found")
+    
     return False
 
 # Function to read EOL dates from a CSV file and return a dictionary
@@ -281,13 +275,6 @@ def read_eol_dates(csv_file_path):
 
 # Function to compare device version with EOL version
 def version_compare(version1, version2):
-    """
-    Compare two version strings.
-    
-    :param version1: First version string to compare
-    :param version2: Second version string to compare
-    :return: -1 if version1 < version2, 0 if version1 == version2, 1 if version1 > version2
-    """
     def normalize(v):
         return [int(x) if x.isdigit() else x for x in re.findall(r'([0-9]+|[a-zA-Z]+|-)', v)]
 
@@ -418,21 +405,64 @@ def find_eol_version_and_date(device_version, sw_eol_dates):
         logger.debug(f"No matching EOL version found for device version: {device_version}")
         return None, None
 
+# Functions to generate email message
+def generate_email_body(consolidated_results):
+    summary = "Palo Alto Devices with Issues Detected:\n\n"
+    for device_id, result in consolidated_results.items():
+        summary += f"FireMon Device ID: {device_id}\n"
+        summary += f"Device Name: {result['device_name']}\n"
+        summary += f"Management IP: {result['management_ip']}\n"
+        summary += f"Version: {result['sw_version']}\n"
+        summary += f"Model: {result['model']}\n"
+        
+        for violation_type, timestamp in result['violations']:
+            timestamp_str = datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S %Z')
+            formatted_difference = format_time_difference(now - timestamp)
+            summary += f"Outdated {violation_type}: {timestamp_str} (Age: {formatted_difference})\n"
+        
+        if result['eol_violations_hw']:
+            hw_model, hw_eol_date = result['eol_violations_hw']
+            summary += f"EOL Hardware: {hw_model} (EOL Date: {hw_eol_date.strftime('%Y-%m-%d')})\n"
+        
+        if result['eol_violations_sw']:
+            sw_version, sw_eol_version, sw_eol_date = result['eol_violations_sw']
+            summary += f"EOL Software: {sw_version} (EOL Version: {sw_eol_version}, EOL Date: {sw_eol_date.strftime('%Y-%m-%d')})\n"
+        
+        if result['vulnerabilities']:
+            summary += f"Vulnerabilities: {', '.join(result['vulnerabilities'])}\n"
+        
+        summary += "\n"  # Add an extra line break between devices
+    
+    total_devices_with_issues = len(consolidated_results)
+    summary += f"\nTotal devices with issues: {total_devices_with_issues}\n"
+    
+    return summary
+
 # Function to consolidate results from various checks into a single report
 def consolidate_results(violations, eol_violations, cve_details, device_summaries, timestamps, sw_versions, models):
     consolidated_results = {}
     
-    # Collect all device IDs from various sources
     all_device_ids = set(
         [str(v[0]) for v in violations] +
-        [str(v[0]) for v in eol_violations] +  # Ensure correct handling of set
+        [str(v[0]) for v in eol_violations] +
         [d.split('(')[1].rstrip(')') for devices in cve_details.values() for d in devices]
     )
     
     logger.debug(f"Software versions before consolidation: {sw_versions}")
 
     for device_id in all_device_ids:
-        device_name, management_ip = device_summaries.get(int(device_id), ('Unknown Device', 'Unknown IP'))
+        device_info = device_summaries.get(int(device_id), {})
+        logger.debug(f"Raw device info for device {device_id}: {device_info}")
+        
+        if isinstance(device_info, dict):
+            device_name = device_info.get('name', 'Unknown Device')
+            management_ip = device_info.get('management_ip', 'Unknown IP')
+        else:
+            device_name = 'Unknown Device'
+            management_ip = 'Unknown IP'
+        
+        logger.debug(f"Processed device info - Name: {device_name}, IP: {management_ip}")
+        
         consolidated_results[device_id] = {
             'device_name': device_name,
             'management_ip': management_ip,
@@ -500,16 +530,33 @@ try:
         logger.info(f"Making API call to: {url}")
         response = requests.get(url, headers=headers, verify=not ignore_certificate)
         logger.info(f"Received response with status code: {response.status_code}")
+        logger.info(f"Received response with status code: {response.status_code}")
+        logger.debug(f"API Response Headers: {response.headers}")
+        logger.debug(f"API Response Content: {response.text[:1000]}...")  # Log first 1000 characters to avoid extremely long logs
+
+        # Parse the JSON response
+        try:
+            data = response.json()
+            logger.debug(f"Parsed JSON data structure: {json.dumps(data, indent=2)[:1000]}...")  # Log first 1000 characters of formatted JSON
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse JSON response: {e}")
+            logger.debug(f"Raw response content: {response.text}")
+            raise
 
         if response.status_code == 200:
             data = response.json()
-            logger.debug(f"API Response: {json.dumps(data, indent=2)}")
-            
-            device_summaries = {d['deviceId']: (d['deviceName'], d.get('deviceManagementIp', 'Unknown IP')) for d in data.get('deviceSummaries', [])}
+            device_summaries = {}
+            for d in data.get('deviceSummaries', []):
+                device_id = d.get('deviceId')
+                device_summaries[device_id] = {
+                    'name': d.get('deviceName', 'Unknown Device'),
+                    'management_ip': d.get('deviceManagementIp', 'Unknown IP'),
+                    'last_revision': d.get('lastRevision')
+                }
 
             timestamps = {}
             violations = []
-            eol_violations = set()  # Ensure eol_violations is initialized correctly
+            eol_violations = set()
             palo_alto_devices = []
 
             for match in data.get('regexMatches', []):
@@ -517,11 +564,28 @@ try:
                 device_id = match.get('deviceId', None)
 
                 logger.debug(f"Processing line for device {device_id}: {line}")
+                logger.debug(f"Full match data: {json.dumps(match, indent=2)}")
 
-                current_for_version_check = device_id is not None and is_device_current(device_id, revision_max_age)
-                current_for_eol_check = device_id is not None and is_device_current(device_id, eol_revision_max_age)
 
+                current_for_version_check = device_id is not None and is_device_current(device_id, revision_max_age, device_summaries)
+                current_for_eol_check = device_id is not None and is_device_current(device_id, eol_revision_max_age, device_summaries)
+                
                 if device_id is not None:
+                    device_info = device_summaries.get(device_id, {})
+                    logger.debug(f"Populated device_summaries: {json.dumps(device_summaries, indent=2)}")
+                    logger.debug(f"Raw device info for device {device_id}: {device_info}")
+                    
+                    if isinstance(device_info, dict):
+                        device_name = device_info.get('name', 'Unknown Device')
+                        management_ip = device_info.get('management_ip', 'Unknown IP')
+                    else:
+                        device_name = 'Unknown Device'
+                        management_ip = 'Unknown IP'
+
+                    logger.debug(f"Processing device with ID: {device_id}, type: {type(device_id)}")
+                    logger.debug(f"Device summary for this ID: {device_summaries.get(device_id)}")
+                    logger.debug(f"Processed device info - Name: {device_name}, IP: {management_ip}")
+
                     wildfire_match = re.search(r'<wildfire-release-date>(.*?)</wildfire-release-date>', line)
                     av_match = re.search(r'<av-release-date>(.*?)</av-release-date>', line)
                     app_match = re.search(r'<app-release-date>(.*?)</app-release-date>', line)
@@ -541,9 +605,9 @@ try:
                         models[str(device_id)] = model
                     
                     logger.debug(f"Device {device_id} - Version: {sw_versions.get(str(device_id))}, Model: {models.get(str(device_id))}")
-
                     if device_id not in timestamps:
                         timestamps[device_id] = {}
+
 
                     if current_for_version_check:
                         if wildfire_match:
@@ -577,16 +641,21 @@ try:
                     sw_version = sw_versions.get(str(device_id), 'N/A')
                     model = model_match.group(1) if model_match else 'N/A'
                     
-                    device_name, management_ip = device_summaries.get(device_id, ('Unknown Device', 'Unknown IP'))
-                    palo_alto_devices.append((device_name, device_id, sw_version))
+                    device_info = device_summaries.get(device_id, {})
+                    device_name = device_info.get('name', 'Unknown Device')
+                    management_ip = device_info.get('management_ip', 'Unknown IP')
 
-                    logger.info(f"Checked device {device_id}: {device_summaries.get(device_id, ('Unknown Device', 'Unknown IP'))}, "
-                                f"Wildfire Date: {timestamps.get(device_id, {}).get('wildfire-release-date', 'N/A')}, "
-                                f"AV Date: {timestamps.get(device_id, {}).get('av-release-date', 'N/A')}, "
-                                f"App Date: {timestamps.get(device_id, {}).get('app-release-date', 'N/A')}, "
-                                f"Threat Date: {timestamps.get(device_id, {}).get('threat-release-date', 'N/A')}, "
-                                f"Software Version: {sw_version}, "
-                                f"Model: {model}")
+                    palo_alto_devices.append((device_name, str(device_id), sw_versions.get(str(device_id), 'N/A')))
+                    logger.debug(f"Retrieved device info for {device_id}: Name: {device_name}, IP: {management_ip}")
+                    logger.info(f"Checked device {device_id}: {device_name}, "
+                        f"Management IP: {management_ip}, "
+                        f"Wildfire Date: {timestamps.get(device_id, {}).get('wildfire-release-date', 'N/A')}, "
+                        f"AV Date: {timestamps.get(device_id, {}).get('av-release-date', 'N/A')}, "
+                        f"App Date: {timestamps.get(device_id, {}).get('app-release-date', 'N/A')}, "
+                        f"Threat Date: {timestamps.get(device_id, {}).get('threat-release-date', 'N/A')}, "
+                        f"Software Version: {sw_versions.get(str(device_id), 'N/A')}, "
+                        f"Model: {models.get(str(device_id), 'N/A')}")
+
 
                     if current_for_eol_check:
                         sw_version = sw_versions.get(str(device_id), 'N/A')
@@ -648,35 +717,7 @@ try:
                 consolidated_results = consolidate_results(violations, eol_violations, cve_details, device_summaries, timestamps, sw_versions, models)
                 
                 if consolidated_results:
-                    summary = "Palo Alto Devices with Issues Detected:\n\n"
-                    for device_id, result in consolidated_results.items():
-                        summary += f"FireMon Device ID: {device_id}\n"
-                        summary += f"Device Name: {result['device_name']}\n"
-                        summary += f"Management IP: {result['management_ip']}\n"
-                        summary += f"Version: {result['sw_version']}\n"
-                        summary += f"Model: {result['model']}\n"
-                        
-                        for violation_type, timestamp in result['violations']:
-                            timestamp_str = datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S %Z')
-                            formatted_difference = format_time_difference(now - timestamp)
-                            summary += f"Outdated {violation_type}: {timestamp_str} (Age: {formatted_difference})\n"
-                        
-                        if result['eol_violations_hw']:
-                            hw_model, hw_eol_date = result['eol_violations_hw']
-                            summary += f"EOL Hardware: {hw_model} (EOL Date: {hw_eol_date.strftime('%Y-%m-%d')})\n"
-                        
-                        if result['eol_violations_sw']:
-                            sw_version, sw_eol_version, sw_eol_date = result['eol_violations_sw']
-                            summary += f"EOL Software: {sw_version} (EOL Version: {sw_eol_version}, EOL Date: {sw_eol_date.strftime('%Y-%m-%d')})\n"
-                        
-                        if result['vulnerabilities']:
-                            summary += f"Vulnerabilities: {', '.join(result['vulnerabilities'])}\n"
-                        
-                        summary += "\n"
-                                        
-                    total_devices_with_issues = len(consolidated_results)
-                    summary += f"\nTotal devices with issues: {total_devices_with_issues}\n"
-                    
+                    summary = generate_email_body(consolidated_results)
                     print(summary)
                     logger.info(summary)
                 
@@ -734,92 +775,79 @@ try:
 
                 if email_enabled and (not smtp_authentication_required or (smtp_authentication_required and smtp_username and smtp_password)):
                     subject = "[FireMon] Outdated Palo Alto Releases and EOL Devices Detected"
-                    if send_aggregate_email:
-                        try:
-                            server = smtplib.SMTP(smtp_server, smtp_port)
-                            if use_tls:
-                                server.starttls()
-                            if smtp_authentication_required:
-                                server.login(smtp_username, smtp_password)
+                    email_body = generate_email_body(consolidated_results)
+                    
+                    try:
+                        server = smtplib.SMTP(smtp_server, smtp_port)
+                        if use_tls:
+                            server.starttls()
+                        if smtp_authentication_required:
+                            server.login(smtp_username, smtp_password)
 
-                            message = MIMEMultipart()
-                            message['Subject'] = subject
-                            message['From'] = sender_email
-                            message['To'] = recipient_email
-                            message.attach(MIMEText(summary, 'plain'))
+                        message = MIMEMultipart()
+                        message['Subject'] = subject
+                        message['From'] = sender_email
+                        message['To'] = recipient_email
+                        message.attach(MIMEText(email_body, 'plain'))
 
-                            attachments = [violations_csv_path, cve_csv_path]
-                            for attachment_path in attachments:
-                                with open(attachment_path, 'rb') as attachment:
-                                    part = MIMEBase('application', 'octet-stream')
-                                    part.set_payload(attachment.read())
-                                    encoders.encode_base64(part)
-                                    part.add_header('Content-Disposition', f'attachment; filename="{os.path.basename(attachment_path)}"')
-                                    message.attach(part)
+                        attachments = [violations_csv_path, cve_csv_path]
+                        for attachment_path in attachments:
+                            with open(attachment_path, 'rb') as attachment:
+                                part = MIMEBase('application', 'octet-stream')
+                                part.set_payload(attachment.read())
+                                encoders.encode_base64(part)
+                                part.add_header('Content-Disposition', f'attachment; filename="{os.path.basename(attachment_path)}"')
+                                message.attach(part)
 
+                        if send_aggregate_email:
                             server.sendmail(sender_email, recipient_email, message.as_string())
                             logger.info("Aggregate email alert sent with out of date Palo Alto releases and EOL devices")
                             print("Aggregate email alert sent with out of date Palo Alto releases and EOL devices")
-                        except Exception as e:
-                            logger.error(f"Failed to send aggregate email alert: {e}")
-                            print(f"Failed to send aggregate email alert: {e}")
-                    else:
-                        for device_id, result in consolidated_results.items():
-                            device_name = result['device_name']
-                            management_ip = result['management_ip']
-                            sw_version = result['sw_version']
-                            model = result['model']
-                            
-                            individual_subject = f"[FireMon] Palo Alto Issues Detected for {device_name}"
-                            individual_body = f"FireMon Device ID: {device_id}\n"
-                            individual_body += f"Device Name: {device_name}\n"
-                            individual_body += f"Management IP: {management_ip}\n"
-                            individual_body += f"Software Version: {sw_version}\n"
-                            individual_body += f"Model: {model}\n\n"
-                            
-                            for violation_type, timestamp in result['violations']:
-                                timestamp_str = datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S %Z')
-                                formatted_difference = format_time_difference(now - timestamp)
-                                individual_body += f"Outdated {violation_type}: {timestamp_str} (Age: {formatted_difference})\n"
-                            
-                            if result['eol_violations_hw']:
-                                hw_model, hw_eol_date = result['eol_violations_hw']
-                                individual_body += f"EOL Hardware: {hw_model} (EOL Date: {hw_eol_date.strftime('%Y-%m-%d')})\n"
-                            
-                            if result['eol_violations_sw']:
-                                sw_version, sw_eol_version, sw_eol_date = result['eol_violations_sw']
-                                individual_body += f"EOL Software: {sw_version} (EOL Version: {sw_eol_version}, EOL Date: {sw_eol_date.strftime('%Y-%m-%d')})\n"
-                            
-                            if result['vulnerabilities']:
-                                individual_body += f"Vulnerabilities: {', '.join(result['vulnerabilities'])}\n"
-                            
-                            try:
-                                server = smtplib.SMTP(smtp_server, smtp_port)
-                                if use_tls:
-                                    server.starttls()
-                                if smtp_authentication_required:
-                                    server.login(smtp_username, smtp_password)
+                        else:
+                            for device_id, result in consolidated_results.items():
+                                device_name = result['device_name']
+                                management_ip = result['management_ip']
+                                sw_version = result['sw_version']
+                                model = result['model']
+                                
+                                individual_subject = f"[FireMon] Palo Alto Issues Detected for {device_name}"
+                                individual_body = f"FireMon Device ID: {device_id}\n"
+                                individual_body += f"Device Name: {device_name}\n"
+                                individual_body += f"Management IP: {management_ip}\n"
+                                individual_body += f"Software Version: {sw_version}\n"
+                                individual_body += f"Model: {model}\n\n"
+                                
+                                for violation_type, timestamp in result['violations']:
+                                    timestamp_str = datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S %Z')
+                                    formatted_difference = format_time_difference(now - timestamp)
+                                    individual_body += f"Outdated {violation_type}: {timestamp_str} (Age: {formatted_difference})\n"
+                                
+                                if result['eol_violations_hw']:
+                                    hw_model, hw_eol_date = result['eol_violations_hw']
+                                    individual_body += f"EOL Hardware: {hw_model} (EOL Date: {hw_eol_date.strftime('%Y-%m-%d')})\n"
+                                
+                                if result['eol_violations_sw']:
+                                    sw_version, sw_eol_version, sw_eol_date = result['eol_violations_sw']
+                                    individual_body += f"EOL Software: {sw_version} (EOL Version: {sw_eol_version}, EOL Date: {sw_eol_date.strftime('%Y-%m-%d')})\n"
+                                
+                                if result['vulnerabilities']:
+                                    individual_body += f"Vulnerabilities: {', '.join(result['vulnerabilities'])}\n"
+                                
+                                individual_message = MIMEMultipart()
+                                individual_message['Subject'] = individual_subject
+                                individual_message['From'] = sender_email
+                                individual_message['To'] = recipient_email
+                                individual_message.attach(MIMEText(individual_body, 'plain'))
 
-                                message = MIMEMultipart()
-                                message['Subject'] = individual_subject
-                                message['From'] = sender_email
-                                message['To'] = recipient_email
-                                message.attach(MIMEText(individual_body, 'plain'))
+                                server.sendmail(sender_email, recipient_email, individual_message.as_string())
+                                logger.info(f"Individual email alert sent for Device: {device_name}")
+                                print(f"Individual email alert sent for Device: {device_name}")
 
-                                attachments = [violations_csv_path, cve_csv_path]
-                                for attachment_path in attachments:
-                                    with open(attachment_path, 'rb') as attachment:
-                                        part = MIMEBase('application', 'octet-stream')
-                                        part.set_payload(attachment.read())
-                                        encoders.encode_base64(part)
-                                        part.add_header('Content-Disposition', f'attachment; filename="{os.path.basename(attachment_path)}"')
-                                        message.attach(part)
-                                server.sendmail(sender_email, recipient_email, message.as_string())
-                                logger.info(f"Email alert sent for Device: {device_name}")
-                                print(f"Email alert sent for Device: {device_name}")
-                            except Exception as e:
-                                logger.error(f"Failed to send email alert for {device_name}: {e}")
-                                print(f"Failed to send email alert for {device_name}: {e}")
+                    except Exception as e:
+                        logger.error(f"Failed to send email alert: {e}")
+                        print(f"Failed to send email alert: {e}")
+                    finally:
+                        server.quit()
                 else:
                     if send_aggregate_email:
                         print(summary)
@@ -844,10 +872,16 @@ try:
         print(f"Authentication request failed with status code: {auth_response.status_code}")
 except requests.exceptions.RequestException as e:
     logger.critical(f"An error occurred during the request: {e}")
+    logger.error(f"Traceback: {traceback.format_exc()}")
     print(f"An error occurred during the request: {e}")
+    print("Check the log file for more details.")
 except ValueError as e:
     logger.error(f"Failed to parse JSON response: {e}")
+    logger.error(f"Traceback: {traceback.format_exc()}")
     print(f"Failed to parse JSON response: {e}")
+    print("Check the log file for more details.")
 except Exception as e:
     logger.error(f"Unexpected error: {e}")
+    logger.error(f"Traceback: {traceback.format_exc()}")
     print(f"Unexpected error: {e}")
+    print("Check the log file for more details.")
