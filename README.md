@@ -29,7 +29,7 @@ This is the main script that performs the version monitoring and alerting. It us
    Place the CSV files containing EOL data for hardware models and software versions in the same directory as the script. You can generate these files using the `scrape-eol-dates.py` script (see below).
 
 4. Configure the script:
-   Update the `config.yaml` file with your FireMon server details, email settings, and alert thresholds.
+   Update the `config.yaml` file with your FireMon server details, email settings, and alert thresholds. Mostimportantly copy/paste the imported control UUID. This can be found by clicking into the control under Administration > Compliance > Controls > Search for contolr "Palo Alto Verion Monitor", then click on it. The UUID will show in the browser URL.
 
 #### Usage
 
