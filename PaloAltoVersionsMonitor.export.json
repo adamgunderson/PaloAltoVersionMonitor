@@ -6,7 +6,7 @@
       "controlCode": "UD-00008",
       "controlType": "REGEX",
       "domainId": 1,
-      "name": "Palo Alto - EOL check, app release, av release, url filtering, wildfire and threat release dates",
+      "name": "Palo Alto Verion Monitor",
       "severity": 1,
       "system": false,
       "properties": [
