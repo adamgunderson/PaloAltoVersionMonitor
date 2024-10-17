@@ -1,11 +1,20 @@
 #!/usr/bin/python
 
 import sys
-sys.path.append('/usr/lib/firemon/devpackfw/lib/python3.9/site-packages')  # Adjust this path based on your version of FMOS.
+# Adding FireMon package path
+sys.path.append('/usr/lib/firemon/devpackfw/lib/python3.8/site-packages')
+try:
+    import requests
+except:
+    try:
+        sys.path.append('/usr/lib/firemon/devpackfw/lib/python3.9/site-packages')
+        import requests
+    except:
+        sys.path.append('/usr/lib/firemon/devpackfw/lib/python3.10/site-packages')
+        import requests
 import yaml
 import logging
 from logging.handlers import RotatingFileHandler
-import requests
 import re
 from itertools import zip_longest
 import csv
