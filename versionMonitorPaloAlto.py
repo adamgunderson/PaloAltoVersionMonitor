@@ -1,40 +1,100 @@
 #!/usr/bin/python
 
+# Adding necessary base imports first
 import sys
-# Adding FireMon package path
-sys.path.append('/usr/lib/firemon/devpackfw/lib/python3.8/site-packages')
-try:
-    import requests
-except:
-    try:
-        sys.path.append('/usr/lib/firemon/devpackfw/lib/python3.9/site-packages')
-        import requests
-    except:
-        sys.path.append('/usr/lib/firemon/devpackfw/lib/python3.10/site-packages')
-        import requests
-import yaml
-import logging
-from logging.handlers import RotatingFileHandler
-import re
-from itertools import zip_longest
-import csv
 import os
-import json
-from datetime import datetime, timedelta, timezone
-from dateutil import parser
-from dateutil.tz import gettz
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
-from email import encoders
-import time
-import urllib3
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from collections import defaultdict, deque
-from threading import Lock
-from urllib.parse import quote
-import traceback
+import importlib
+
+# Function to dynamically import modules by searching for them in potential site-packages locations
+def ensure_module(module_name):
+    """
+    Dynamically import a module by searching for it in potential site-packages locations.
+    
+    Args:
+        module_name (str): Name of the module to import
+        
+    Returns:
+        module: The imported module
+        
+    Raises:
+        ImportError: If the module cannot be found in any location
+    """
+    # First try the normal import in case it's already in the path
+    try:
+        return importlib.import_module(module_name)
+    except ImportError:
+        pass
+    
+    # Get the current Python version
+    py_version = f"{sys.version_info.major}.{sys.version_info.minor}"
+    
+    # Create a list of potential paths to check
+    base_path = '/usr/lib/firemon/devpackfw/lib'
+    potential_paths = [
+        # Current Python version
+        f"{base_path}/python{py_version}/site-packages",
+        # Exact Python version with patch
+        f"{base_path}/python{sys.version.split()[0]}/site-packages",
+        # Try a range of nearby versions (for future-proofing)
+        *[f"{base_path}/python3.{i}/site-packages" for i in range(8, 20)]
+    ]
+    
+    # Try each path
+    for path in potential_paths:
+        if os.path.exists(path):
+            if path not in sys.path:
+                sys.path.append(path)
+            try:
+                return importlib.import_module(module_name)
+            except ImportError:
+                continue
+    
+    # If we get here, we couldn't find the module
+    raise ImportError(f"Could not find module {module_name} in any potential site-packages location")
+
+# Import required modules using the ensure_module function
+try:
+    # Core modules
+    requests = ensure_module("requests")
+    yaml = ensure_module("yaml")
+    logging = ensure_module("logging")
+    RotatingFileHandler = ensure_module("logging.handlers").RotatingFileHandler
+    re = ensure_module("re")
+    zip_longest = ensure_module("itertools").zip_longest
+    csv = ensure_module("csv")
+    json = ensure_module("json")
+    
+    # Date and time handling
+    from datetime import datetime, timedelta, timezone
+    parser = ensure_module("dateutil.parser")
+    gettz = ensure_module("dateutil.tz").gettz
+    time = ensure_module("time")
+    
+    # Email functionality
+    smtplib = ensure_module("smtplib")
+    MIMEText = ensure_module("email.mime.text").MIMEText
+    MIMEMultipart = ensure_module("email.mime.multipart").MIMEMultipart
+    MIMEBase = ensure_module("email.mime.base").MIMEBase
+    encoders = ensure_module("email").encoders
+    
+    # HTTP and networking
+    urllib3 = ensure_module("urllib3")
+    quote = ensure_module("urllib.parse").quote
+    
+    # Concurrency
+    ThreadPoolExecutor = ensure_module("concurrent.futures").ThreadPoolExecutor
+    as_completed = ensure_module("concurrent.futures").as_completed
+    defaultdict = ensure_module("collections").defaultdict
+    deque = ensure_module("collections").deque
+    Lock = ensure_module("threading").Lock
+    
+    # Error handling
+    traceback = ensure_module("traceback")
+    
+except ImportError as e:
+    print(f"Error importing required module: {e}")
+    print("Please ensure all required Python modules are installed. Exiting.")
+    sys.exit(1)
 
 # Load configuration from YAML file
 try:
@@ -66,6 +126,12 @@ if config['logging_enabled']:
     file_handler.setFormatter(formatter)
     # Add the handler to the logger
     logger.addHandler(file_handler)
+    
+    # Add console logging if enabled
+    if config.get('console_logging', False):
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
 else:
     logger.addHandler(logging.NullHandler())
 
@@ -538,7 +604,6 @@ try:
 
         logger.info(f"Making API call to: {url}")
         response = requests.get(url, headers=headers, verify=not ignore_certificate)
-        logger.info(f"Received response with status code: {response.status_code}")
         logger.info(f"Received response with status code: {response.status_code}")
         logger.debug(f"API Response Headers: {response.headers}")
         logger.debug(f"API Response Content: {response.text[:1000]}...")  # Log first 1000 characters to avoid extremely long logs
